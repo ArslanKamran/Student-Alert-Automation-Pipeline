@@ -1,0 +1,12 @@
+.env
+automation.log
+processed_log.txt
+__pycache__/
+*.pyc
+.DS_Store
+
+# Extra generated files
+linkedin_post.txt
+linkedin_reply.txt
+prompt_generator.txt
+API_GUIDE.md
