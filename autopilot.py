@@ -83,8 +83,10 @@ def map_folder_to_dropdown_text(folder_name):
     
     suffix = "A"
     number = ''.join(filter(str.isdigit, clean))
-    if "Matric" in clean or "M" in clean.upper(): suffix = "M"
-    elif "Cambridge" in clean or "C" in clean.upper(): suffix = "C"
+    if "Matric" in clean: suffix = "M"
+    elif "Cambridge" in clean: suffix = "C"
+    elif "M" in clean.upper() and "CAMBRIDGE" not in clean.upper(): suffix = "M"
+    elif "C" in clean.upper() and "MATRIC" not in clean.upper(): suffix = "C"
     elif not number: return None 
     if number in ["1", "2", "3", "4", "5", "6", "7"]: suffix = "A"
     return f"{number} - {suffix}"
@@ -172,7 +174,7 @@ def ask_ai_batch(file_list):
 #      PROCESS LOGIC
 # ==========================================
 
-def process_email_and_upload(email_subject, upload_title, email_msg):
+def process_email_and_upload(email_subject, upload_title, email_msg, driver=None):
     logging.info(f"Processing work for {upload_title} ({email_subject})...")
     
     safe_title = upload_title.replace(" ", "_")
@@ -202,7 +204,7 @@ def process_email_and_upload(email_subject, upload_title, email_msg):
 
         if not files_to_process:
             logging.warning("No attachments found in email.")
-            return False
+            return False, driver
 
         # 2. SORT (Hybrid)
         folders_created = set()
@@ -236,7 +238,7 @@ def process_email_and_upload(email_subject, upload_title, email_msg):
 
         if not folders_created:
             logging.warning("No recognizable folders found or created.")
-            return False
+            return False, driver
 
         # 3. ZIP
         zips_to_upload = []
@@ -246,25 +248,30 @@ def process_email_and_upload(email_subject, upload_title, email_msg):
             zips_to_upload.append(f"{zip_name}.zip")
 
         # 4. UPLOAD
-        logging.info("Starting Browser...")
-        chrome_options = Options()
-        if HEADLESS_MODE:
-            chrome_options.add_argument("--headless=new")
+        if not driver:
+            logging.info("Starting Browser...")
+            chrome_options = Options()
+            if HEADLESS_MODE:
+                chrome_options.add_argument("--headless=new")
+                
+            chrome_options.add_argument("--window-size=1920,1080")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            driver = webdriver.Chrome(options=chrome_options)
             
-        chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        driver = webdriver.Chrome(options=chrome_options)
-        
-        try:
-            driver.get(LOGIN_URL)
-            time.sleep(3)
-            driver.find_element(By.ID, "txtUsername").send_keys(SITE_USERNAME)
-            driver.find_element(By.ID, "txtPassword").send_keys(SITE_PASSWORD)
-            driver.find_element(By.NAME, "commit").click()
-            logging.info("Login Success.")
-            time.sleep(5)
+            try:
+                driver.get(LOGIN_URL)
+                time.sleep(3)
+                driver.find_element(By.ID, "txtUsername").send_keys(SITE_USERNAME)
+                driver.find_element(By.ID, "txtPassword").send_keys(SITE_PASSWORD)
+                driver.find_element(By.NAME, "commit").click()
+                logging.info("Login Success.")
+                time.sleep(5)
+            except Exception as e:
+                logging.error(f"Login failed: {e}")
+                return False, driver
 
+        try:
             for zip_file in zips_to_upload:
                 logging.info(f"Uploading {zip_file}...")
                 full_zip_path = os.path.abspath(os.path.join(zip_dir, zip_file))
@@ -317,12 +324,11 @@ def process_email_and_upload(email_subject, upload_title, email_msg):
         except Exception as e:
             logging.error(f"Upload flow encounted an error: {e}")
         finally:
-            driver.quit()
             # Explicitly clear temporary files after locks are released
             try: shutil.rmtree(temp_work_dir)
             except: pass
 
-        return True
+        return True, driver
 
 # ==========================================
 #      MAIN EXECUTION (RUN ONCE)
@@ -356,6 +362,7 @@ if __name__ == "__main__":
         
         processed_log = load_processed_ids()
         work_count = 0
+        driver = None
         
         # Check ALL emails found
         for eid in email_ids: 
@@ -370,7 +377,7 @@ if __name__ == "__main__":
             upload_title = get_upload_title(subject)
             if upload_title:
                 logging.info(f"*** New Email: {subject} ***")
-                success = process_email_and_upload(subject, upload_title, msg)
+                success, driver = process_email_and_upload(subject, upload_title, msg, driver)
                 if success:
                     save_processed_id(eid_str)
                     work_count += 1
@@ -378,6 +385,9 @@ if __name__ == "__main__":
                 save_processed_id(eid_str)
 
         mail.logout()
+        
+        if driver:
+            driver.quit()
         
         if work_count == 0:
             logging.info("Done: No new work found in inbox.")
